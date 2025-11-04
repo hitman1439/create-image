@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>유튜브 이미지 자동 생성기 | Gemini AI (병렬 처리)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 유튜브 이미지 자동 생성기</h1>
+            <p class="subtitle">노년 건강 콘텐츠용 · Gemini 2.0 Flash · ⚡ 병렬 비동기 처리</p>
+        </header>
+
+        <!-- Step 1: 대본 입력 -->
+        <section class="card" id="step1">
+            <div class="step-header">
+                <span class="step-number">1</span>
+                <h2>영상 대본 입력</h2>
+            </div>
+            <textarea 
+                id="scriptInput" 
+                placeholder="유튜브 영상 대본을 여기에 입력하세요...
+
+예시:
+안녕하세요. 오늘은 노년층의 건강한 식습관에 대해 알아보겠습니다.
+첫째, 아침 식사는 꼭 챙겨 먹어야 합니다...
+둘째, 신선한 채소와 과일을 충분히 섭취하세요...
+"
+                rows="12"
+            ></textarea>
+            <div class="button-group">
+                <button id="analyzeBtn" class="btn btn-primary">
+                    <span class="btn-icon">🔍</span>
+                    대본 분석하기 (10개 장면 추출)
+                </button>
+            </div>
+        </section>
+
+        <!-- Step 2: 분석 결과 및 이미지 생성 -->
+        <section class="card" id="step2" style="display: none;">
+            <div class="step-header">
+                <span class="step-number">2</span>
+                <h2>장면 분석 결과 및 이미지 생성</h2>
+            </div>
+            <div class="button-group">
+                <button id="generateBtn" class="btn btn-success">
+                    <span class="btn-icon">⚡</span>
+                    이미지 생성 시작 (병렬 처리 - 10개 동시 생성)
+                </button>
+                <button id="editBtn" class="btn btn-secondary">
+                    <span class="btn-icon">✏️</span>
+                    장면 재분석
+                </button>
+            </div>
+            <div id="scenesPreview" class="scenes-grid"></div>
+        </section>
+
+        <!-- Step 3: 생성 상태 및 완료 -->
+        <section class="card" id="step3" style="display: none;">
+            <div class="step-header">
+                <span class="step-number">3</span>
+                <h2>이미지 생성 진행 상황</h2>
+            </div>
+            
+            <div id="generationStatus" class="generation-status"></div>
+            
+            <div class="button-group">
+                <button id="downloadAllBtn" class="btn btn-success" disabled>
+                    <span class="btn-icon">📦</span>
+                    전체 이미지 다운로드 (ZIP 압축)
+                </button>
+                <button id="restartBtn" class="btn btn-secondary">
+                    <span class="btn-icon">🔄</span>
+                    새로 시작하기
+                </button>
+            </div>
+        </section>
+
+        <!-- 로딩 오버레이 -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <p>처리 중...</p>
+        </div>
+    </div>
+
+    <footer>
+        <p>Made with ❤️ for 노년 건강 콘텐츠 크리에이터 | ⚡ 병렬 비동기 처리 모드</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

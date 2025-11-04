@@ -29,9 +29,9 @@ const IMAGE_CONFIG = {
   MODEL: "gemini-2.0-flash-exp",
   LANGUAGE: "ko",
   OUTPUT_RULES: {
-    exact_image_count: 10,            // 테스트용 10개
-    aspect_ratio: "16:9",           // 유튜브 표준 비율 (가로로 긴 구도)
-    resolution: "1920x1080",        // Full HD
+    exact_image_count: 10,
+    aspect_ratio: "16:9",
+    resolution: "1920x1080",
     disallow: ["collage", "grid", "text", "logo", "watermark"]
   },
   STYLE: {
@@ -44,7 +44,7 @@ const IMAGE_CONFIG = {
   }
 };
 
-// 1. 대본 분석하여 30개 장면 추출
+// 1. 대본 분석하여 10개 장면 추출
 app.post('/api/analyze-script', async (req, res) => {
   try {
     const { script } = req.body;
@@ -161,7 +161,7 @@ JSON만 출력하고 다른 설명은 하지 마세요.
   }
 });
 
-// 2. 이미지 생성 (Gemini Nano Banana - Gemini 2.5 Flash Image)
+// 2. 이미지 생성 (병렬 비동기 처리 - Gemini 2.5 Flash Image Preview)
 app.post('/api/generate-images', async (req, res) => {
   try {
     const { scenes } = req.body;
@@ -176,11 +176,6 @@ app.post('/api/generate-images', async (req, res) => {
       });
     }
 
-    // Gemini Image 모델 초기화 (Nano Banana)
-    const imageModel = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash-image"
-    });
-
     // SSE (Server-Sent Events)로 진행상황 전송
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -192,94 +187,87 @@ app.post('/api/generate-images', async (req, res) => {
 
     sendProgress({ 
       type: 'info', 
-      message: '🍌 Gemini Nano Banana로 이미지 생성을 시작합니다...' 
+      message: '🚀 병렬 비동기 방식으로 10개 이미지를 동시 생성합니다...' 
     });
 
-    // 각 장면에 대한 이미지 생성
-    for (let i = 0; i < scenes.length; i++) {
-      const scene = scenes[i];
-      
-      sendProgress({
-        type: 'progress',
-        current: i + 1,
-        total: scenes.length,
-        scene: scene.description
-      });
-
+    // 병렬 처리를 위한 Promise 배열
+    const imagePromises = scenes.map(async (scene) => {
       try {
-        // Gemini 2.5 Flash Image API로 이미지 생성
-        const result = await imageModel.generateContent([
-          scene.image_prompt
-        ]);
+        sendProgress({
+          type: 'start',
+          scene_number: scene.scene_number,
+          message: `🎨 장면 ${scene.scene_number} 생성 시작...`
+        });
 
+        // Gemini 2.5 Flash Image Preview 모델
+        const imageModel = genAI.getGenerativeModel({ 
+          model: "gemini-2.5-flash-image-preview"
+        });
+
+        // 이미지 생성 (프롬프트만 전달)
+        const result = await imageModel.generateContent(scene.image_prompt);
         const response = await result.response;
         
         // 응답에서 이미지 데이터 추출
+        let imageData = null;
+        
         if (response.candidates && response.candidates[0]) {
-          const candidate = response.candidates[0];
+          const parts = response.candidates[0].content.parts;
           
-          // 이미지 URL 또는 데이터 추출
-          let imageData = null;
-          
-          if (candidate.content && candidate.content.parts) {
-            for (const part of candidate.content.parts) {
-              if (part.inlineData) {
-                imageData = part.inlineData.data;
-                break;
-              } else if (part.fileData && part.fileData.fileUri) {
-                // fileUri가 있는 경우 다운로드
-                const imageUrl = part.fileData.fileUri;
-                const imageResponse = await axios.get(imageUrl, { 
-                  responseType: 'arraybuffer' 
-                });
-                imageData = Buffer.from(imageResponse.data).toString('base64');
-                break;
-              }
+          for (const part of parts) {
+            if (part.inlineData) {
+              imageData = part.inlineData.data;
+              break;
             }
           }
+        }
 
-          if (imageData) {
-            // Base64 이미지를 파일로 저장
-            const imagePath = path.join(
-              OUTPUT_DIR, 
-              `scene_${String(scene.scene_number).padStart(2, '0')}.png`
-            );
-            
-            const buffer = Buffer.from(imageData, 'base64');
-            fs.writeFileSync(imagePath, buffer);
-            
-            sendProgress({
-              type: 'image_saved',
-              message: `✅ 장면 ${scene.scene_number} 저장 완료`,
-              path: imagePath.replace(OUTPUT_DIR, '').substring(1),
-              scene_number: scene.scene_number
-            });
-          } else {
-            throw new Error('이미지 데이터를 찾을 수 없습니다');
-          }
+        if (imageData) {
+          // Base64 이미지를 파일로 저장
+          const imagePath = path.join(
+            OUTPUT_DIR, 
+            `scene_${String(scene.scene_number).padStart(2, '0')}.png`
+          );
+          
+          const buffer = Buffer.from(imageData, 'base64');
+          fs.writeFileSync(imagePath, buffer);
+          
+          // 생성 즉시 클라이언트에 전송
+          sendProgress({
+            type: 'image_complete',
+            message: `✅ 장면 ${scene.scene_number} 완료`,
+            scene_number: scene.scene_number,
+            path: `/images/scene_${String(scene.scene_number).padStart(2, '0')}.png`,
+            imageData: imageData // Base64 데이터 전송 (실시간 표출용)
+          });
+
+          return { success: true, scene_number: scene.scene_number };
         } else {
-          throw new Error('응답에서 이미지를 생성할 수 없습니다');
+          throw new Error('이미지 데이터를 찾을 수 없습니다');
         }
 
       } catch (error) {
-        console.error(`장면 ${i + 1} 생성 오류:`, error);
+        console.error(`장면 ${scene.scene_number} 생성 오류:`, error);
         sendProgress({
           type: 'error',
-          message: `❌ 장면 ${scene.scene_number} 생성 실패: ${error.message}`,
+          message: `❌ 장면 ${scene.scene_number} 실패: ${error.message}`,
           scene_number: scene.scene_number
         });
-        // 오류가 나도 계속 진행
+        return { success: false, scene_number: scene.scene_number, error: error.message };
       }
+    });
 
-      // API rate limit 방지를 위한 약간의 딜레이
-      if (i < scenes.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
+    // 모든 이미지를 병렬로 생성
+    const results = await Promise.all(imagePromises);
+    
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
 
     sendProgress({ 
       type: 'complete', 
-      message: '🎉 모든 이미지 생성 완료!' 
+      message: `🎉 생성 완료! (성공: ${successCount}, 실패: ${failCount})`,
+      successCount,
+      failCount
     });
     
     res.end();
@@ -375,4 +363,5 @@ app.get('/api/download-zip', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 서버가 http://localhost:${PORT} 에서 실행중입니다.`);
   console.log(`📁 이미지 저장 경로: ${OUTPUT_DIR}`);
+  console.log(`⚡ 병렬 비동기 처리 모드 활성화`);
 });
