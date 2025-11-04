@@ -36,7 +36,7 @@ const IMAGE_CONFIG = {
   // 또는 "black-forest-labs/flux-schnell" (빠른 생성용)
   LANGUAGE: "ko",
   OUTPUT_RULES: {
-    exact_image_count: 10,
+    exact_image_count: 30,
     aspect_ratio: "16:9",
     resolution: "1920x1080",
     disallow: ["collage", "grid", "text", "logo", "watermark"]
@@ -51,6 +51,29 @@ const IMAGE_CONFIG = {
   }
 };
 
+// 재시도 헬퍼 함수 (429 에러 대응)
+async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 2000) {
+  let delay = initialDelay;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isRateLimitError = error.status === 429 || 
+                               (error.message && error.message.includes('429')) ||
+                               (error.message && error.message.includes('Too Many Requests'));
+      
+      if (isRateLimitError && i < maxRetries - 1) {
+        console.log(`⚠️ API 제한 감지. 재시도 ${i + 1}/${maxRetries - 1} - ${delay}ms 대기 중...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2; // 지수 백오프 (2초 → 4초 → 8초)
+      } else {
+        throw error;
+      }
+    }
+  }
+}
+
 // 1. 대본 분석하여 10개 장면 추출
 app.post('/api/analyze-script', async (req, res) => {
   try {
@@ -60,10 +83,17 @@ app.post('/api/analyze-script', async (req, res) => {
       return res.status(400).json({ error: '대본을 입력해주세요.' });
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-2.5-flash",
+      generationConfig: {
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+      }
+    });
     
     const prompt = `
-당신은 노년 건강 콘텐츠 전문가입니다. 다음 유튜브 영상 대본을 분석하여 정확히 10개의 장면으로 나누고, 각 장면에 맞는 이미지 생성 프롬프트를 만들어주세요.
+당신은 노년 건강 콘텐츠 전문가입니다. 다음 유튜브 영상 대본을 분석하여 정확히 30개의 장면으로 나누고, 각 장면에 맞는 이미지 생성 프롬프트를 만들어주세요.
 
 **프롬프트 작성 스타일 (매우 중요!)**:
 
@@ -133,14 +163,18 @@ app.post('/api/analyze-script', async (req, res) => {
 **대본**:
 ${script}
 
-정확히 10개의 장면을 만들어주세요.
+정확히 30개의 장면을 만들어주세요.
 각 장면의 내용을 분석하여 사람/음식/환경 중 가장 적합한 피사체를 선택하세요.
 각 image_prompt는 위 예시들처럼 매우 구체적이고 상세해야 합니다 (최소 50단어).
 모든 이미지는 16:9 비율로 가로로 긴 구도입니다.
 JSON만 출력하고 다른 설명은 하지 마세요.
 `;
 
-    const result = await model.generateContent(prompt);
+    // 재시도 로직으로 API 호출
+    const result = await retryWithBackoff(async () => {
+      return await model.generateContent(prompt);
+    });
+
     const response = await result.response;
     let text = response.text();
     
@@ -149,8 +183,8 @@ JSON만 출력하고 다른 설명은 하지 마세요.
     
     const scenes = JSON.parse(text);
     
-    if (!Array.isArray(scenes) || scenes.length !== 10) {
-      throw new Error('10개의 장면이 생성되지 않았습니다.');
+    if (!Array.isArray(scenes) || scenes.length !== 30) {
+      throw new Error('30개의 장면이 생성되지 않았습니다.');
     }
 
     res.json({ 
@@ -161,8 +195,18 @@ JSON만 출력하고 다른 설명은 하지 마세요.
 
   } catch (error) {
     console.error('대본 분석 오류:', error);
+    
+    // 사용자 친화적 에러 메시지
+    let errorMessage = '대본 분석 중 오류가 발생했습니다.';
+    
+    if (error.status === 429 || (error.message && error.message.includes('429'))) {
+      errorMessage = 'API 호출 제한을 초과했습니다. 잠시 후 다시 시도해주세요. (약 1-2분 후)';
+    } else if (error.message && error.message.includes('API key')) {
+      errorMessage = 'Gemini API 키가 올바르지 않습니다. .env 파일을 확인해주세요.';
+    }
+    
     res.status(500).json({ 
-      error: '대본 분석 중 오류가 발생했습니다.', 
+      error: errorMessage, 
       details: error.message 
     });
   }
@@ -209,20 +253,22 @@ app.post('/api/generate-images', async (req, res) => {
       });
 
       try {
-        // Replicate FLUX로 이미지 생성
-        const output = await replicate.run(
-          IMAGE_CONFIG.MODEL,
-          {
-            input: {
-              prompt: scene.image_prompt,
-              aspect_ratio: "16:9",
-              output_format: "png",
-              output_quality: 100,
-              safety_tolerance: 2,
-              prompt_upsampling: true
+        // Replicate FLUX로 이미지 생성 (재시도 로직 포함)
+        const output = await retryWithBackoff(async () => {
+          return await replicate.run(
+            IMAGE_CONFIG.MODEL,
+            {
+              input: {
+                prompt: scene.image_prompt,
+                aspect_ratio: "16:9",
+                output_format: "png",
+                output_quality: 100,
+                safety_tolerance: 2,
+                prompt_upsampling: true
+              }
             }
-          }
-        );
+          );
+        }, 3, 3000); // 3번 재시도, 초기 3초 대기
 
         // FLUX 1.1 Pro는 직접 URL을 반환
         let imageUrl = output;
@@ -376,4 +422,6 @@ app.listen(PORT, () => {
   console.log(`🚀 서버가 http://localhost:${PORT} 에서 실행중입니다.`);
   console.log(`📁 이미지 저장 경로: ${OUTPUT_DIR}`);
   console.log(`🎨 이미지 생성 모델: ${IMAGE_CONFIG.MODEL}`);
+  console.log(`🧠 대본 분석 모델: Gemini 2.5 Flash`);
+  console.log(`📊 생성 이미지 수: 30개`);
 });
