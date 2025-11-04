@@ -1,6 +1,6 @@
 from google import genai
 
-client = genai.Client(api_key="AIzaSyAWupb0LyCie1NYtwWFSd37Ey7c--3Dooc")
+client = genai.Client(api_key="")
 
 # 방법 1: contents를 키워드 인수로 명시
 response = client.models.generate_content(
